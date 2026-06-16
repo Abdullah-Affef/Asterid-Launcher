@@ -2,7 +2,9 @@ import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const INSTANCES_PATH = path.join(app.getPath('userData'), 'instances.json');
+function getInstancesPath(): string {
+  return path.join(app.getPath('userData'), 'instances.json');
+}
 
 export interface Instance {
   id: string;
@@ -38,15 +40,16 @@ function ensureDir(dir: string) {
 
 function loadInstances(): Instance[] {
   try {
-    if (fs.existsSync(INSTANCES_PATH)) {
-      return JSON.parse(fs.readFileSync(INSTANCES_PATH, 'utf-8'));
+    const p = getInstancesPath();
+    if (fs.existsSync(p)) {
+      return JSON.parse(fs.readFileSync(p, 'utf-8'));
     }
   } catch {}
   return [];
 }
 
 function saveInstances(instances: Instance[]) {
-  fs.writeFileSync(INSTANCES_PATH, JSON.stringify(instances, null, 2));
+  fs.writeFileSync(getInstancesPath(), JSON.stringify(instances, null, 2));
 }
 
 export function getInstances(): Instance[] {

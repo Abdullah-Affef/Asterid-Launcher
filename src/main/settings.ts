@@ -2,7 +2,9 @@ import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
+function getSettingsPath(): string {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
 
 export interface LauncherSettings {
   javaPath: string;
@@ -31,8 +33,9 @@ let settings: LauncherSettings = { ...defaultSettings };
 
 export function loadSettings(): LauncherSettings {
   try {
-    if (fs.existsSync(SETTINGS_PATH)) {
-      const data = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
+    const p = getSettingsPath();
+    if (fs.existsSync(p)) {
+      const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
       settings = { ...defaultSettings, ...data };
     }
   } catch {}
@@ -41,7 +44,7 @@ export function loadSettings(): LauncherSettings {
 
 export function saveSettings(newSettings: LauncherSettings): LauncherSettings {
   settings = { ...newSettings };
-  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+  fs.writeFileSync(getSettingsPath(), JSON.stringify(settings, null, 2));
   return settings;
 }
 

@@ -42,9 +42,33 @@ export interface ProgressData {
   total: number;
 }
 
+export interface SetupInfo {
+  needed: boolean;
+  defaults: {
+    gameDirectory: string;
+    launcherDataDir: string;
+  };
+}
+
+export interface UpdateStatus {
+  status: string;
+  info?: any;
+  progress?: any;
+  error?: string;
+}
+
 export interface ElectronAPI {
   onMainLog: (cb: (msg: string) => void) => void;
   onMainProgress?: (cb: (data: { phase: string; current: number; total: number }) => void) => void;
+  onSetupDone: (cb: () => void) => void;
+  onUpdateStatus: (cb: (data: UpdateStatus) => void) => void;
+  setup: {
+    isNeeded: () => Promise<SetupInfo>;
+    complete: (data: { launcherDataDir: string; gameDirectory: string }) => Promise<{ success: boolean }>;
+  };
+  dialog: {
+    selectDirectory: () => Promise<string | null>;
+  };
   window: {
     minimize: () => Promise<void>;
     maximize: () => Promise<void>;

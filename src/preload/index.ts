@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 let logCallback: ((msg: string) => void) | null = null;
 let progressCallback: ((data: { phase: string; current: number; total: number }) => void) | null = null;
+let setupDoneCallback: (() => void) | null = null;
+let updateStatusCallback: ((data: { status: string; info?: any; progress?: any; error?: string }) => void) | null = null;
 
 ipcRenderer.on('main:log', (_e, msg: string) => {
   logCallback?.(msg);
@@ -11,9 +13,26 @@ ipcRenderer.on('main:progress', (_e, data: { phase: string; current: number; tot
   progressCallback?.(data);
 });
 
+ipcRenderer.on('setup:done', () => {
+  setupDoneCallback?.();
+});
+
+ipcRenderer.on('update:status', (_e, data) => {
+  updateStatusCallback?.(data);
+});
+
 contextBridge.exposeInMainWorld('electronAPI', {
   onMainLog: (cb: (msg: string) => void) => { logCallback = cb; },
   onMainProgress: (cb: (data: { phase: string; current: number; total: number }) => void) => { progressCallback = cb; },
+  onSetupDone: (cb: () => void) => { setupDoneCallback = cb; },
+  onUpdateStatus: (cb: (data: { status: string; info?: any; progress?: any; error?: string }) => void) => { updateStatusCallback = cb; },
+  setup: {
+    isNeeded: () => ipcRenderer.invoke('setup:isNeeded'),
+    complete: (data: { launcherDataDir: string; gameDirectory: string }) => ipcRenderer.invoke('setup:complete', data),
+  },
+  dialog: {
+    selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),

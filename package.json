@@ -1,12 +1,17 @@
 {
-  "name": "minecraft-launcher",
-  "version": "1.0.0",
+  "name": "asterid-launcher",
+  "version": "1.0.1",
   "description": "Minecraft launcher with ely.by authentication for cracked players",
   "main": "dist/main/index.js",
+  "author": "Abdullah-Affef",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Abdullah-Affef/Asterid-Launcher.git"
+  },
   "scripts": {
     "dev": "npm run build:main && concurrently --kill-others \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",
     "build:renderer": "vite build",
-    "build:main": "tsc -p tsconfig.main.json && copy /Y \"src\\images\\logo.png\" \"dist\\icon.png\"",
+    "build:main": "tsc -p tsconfig.main.json && copy /Y \"src\\images\\logo.png\" \"dist\\icon.png\" && if not exist \"build\" mkdir \"build\" && copy /Y \"src\\images\\logo.png\" \"build\\icon.png\"",
     "build": "npm run build:renderer && npm run build:main",
     "start": "npm run build && electron .",
     "pack": "electron-builder --dir",
@@ -23,6 +28,13 @@
       {
         "from": "runtime",
         "to": "runtime"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Abdullah-Affef",
+        "repo": "Asterid-Launcher"
       }
     ],
     "directories": {
@@ -55,6 +67,7 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.10",
+    "electron-updater": "^6.8.9",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-icons": "^5.6.0",

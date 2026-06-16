@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, nativeImage, dialog } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -8,6 +8,8 @@ import {
 import { loadSettings, saveSettings, getSettings, LauncherSettings } from './settings';
 import { fetchVersionManifest, launchMinecraft, killMinecraft, isMinecraftRunning } from './minecraft';
 import { getInstances, getInstance, createInstance, updateInstance, deleteInstance, getInstanceDir, Instance } from './instances';
+import { loadBoot, saveBoot, BootConfig } from './boot';
+import { autoUpdater } from 'electron-updater';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -56,6 +58,14 @@ function createWindow() {
   }
 }
 
+function sendLog(msg: string) {
+  mainWindow?.webContents.send('main:log', msg);
+}
+
+function sendProgress(phase: string, current: number, total: number) {
+  mainWindow?.webContents.send('main:progress', { phase, current, total });
+}
+
 function setupIPC() {
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());
   ipcMain.handle('window:maximize', () => {
@@ -92,12 +102,6 @@ function setupIPC() {
       return null;
     }
   });
-  const sendLog = (msg: string) => {
-    mainWindow?.webContents.send('main:log', msg);
-  };
-  const sendProgress = (phase: string, current: number, total: number) => {
-    mainWindow?.webContents.send('main:progress', { phase, current, total });
-  };
 
   ipcMain.handle('minecraft:launchInstance', async (_e, instance: Instance, account: Account) => {
     try {
@@ -239,10 +243,107 @@ function setupIPC() {
   });
 }
 
+function setupSetupIPC() {
+  ipcMain.handle('setup:complete', (_e, data: { launcherDataDir: string; gameDirectory: string }) => {
+    const boot: BootConfig = {
+      setupComplete: true,
+      launcherDataDir: data.launcherDataDir,
+      gameDirectory: data.gameDirectory,
+    };
+    saveBoot(boot);
+
+    if (data.launcherDataDir) {
+      app.setPath('userData', data.launcherDataDir);
+    }
+
+    loadSettings();
+    const s = getSettings();
+    s.gameDirectory = data.gameDirectory;
+    saveSettings(s);
+
+    // Register main IPC handlers now that setup is done
+    setupIPC();
+
+    mainWindow?.webContents.send('setup:done');
+    return { success: true };
+  });
+}
+
+function setupAutoUpdater() {
+  if (process.env.NODE_ENV === 'development' || process.argv.includes('--dev')) {
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => {
+    mainWindow?.webContents.send('update:status', { status: 'checking' });
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    mainWindow?.webContents.send('update:status', { status: 'available', info });
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    mainWindow?.webContents.send('update:status', { status: 'not-available', info });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.webContents.send('update:status', { status: 'downloading', progress });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('update:status', { status: 'downloaded', info });
+  });
+
+  autoUpdater.on('error', (err) => {
+    mainWindow?.webContents.send('update:status', { status: 'error', error: err.message });
+  });
+
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {
+      // silently fail
+    });
+  }, 5000);
+}
+
 app.whenReady().then(() => {
-  loadSettings();
-  setupIPC();
+  const boot = loadBoot();
+
+  // Always register these handlers (needed regardless of setup state)
+  ipcMain.handle('setup:isNeeded', () => {
+    const b = loadBoot();
+    return {
+      needed: !b?.setupComplete,
+      defaults: {
+        gameDirectory: b?.gameDirectory || path.join(app.getPath('home'), '.minecraft'),
+        launcherDataDir: b?.launcherDataDir || app.getPath('userData'),
+      },
+    };
+  });
+
+  ipcMain.handle('dialog:selectDirectory', async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
+  if (boot?.setupComplete) {
+    if (boot.launcherDataDir) {
+      app.setPath('userData', boot.launcherDataDir);
+    }
+    loadSettings();
+    setupIPC();
+  } else {
+    setupSetupIPC();
+  }
+
   createWindow();
+  setupAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
