@@ -942,7 +942,7 @@ html, body, #root {
 
 /* Download progress bar */
 .download-bar {
-  padding: 6px 16px;
+  padding: 8px 16px;
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -951,19 +951,19 @@ html, body, #root {
 .download-bar-label {
   font-size: 11px;
   color: var(--text-secondary);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .download-bar-track {
-  height: 4px;
+  height: 6px;
   background: var(--bg-hover);
-  border-radius: 2px;
+  border-radius: 99px;
   overflow: hidden;
 }
 
 .download-bar-fill {
   height: 100%;
   background: var(--accent);
-  border-radius: 2px;
+  border-radius: 99px;
   transition: width 0.3s ease;
 }

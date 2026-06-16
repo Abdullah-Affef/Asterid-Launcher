@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, nativeImage } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -12,6 +12,20 @@ import { getInstances, getInstance, createInstance, updateInstance, deleteInstan
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
+  const iconPath = path.join(__dirname, '..', 'icon.png');
+  let taskbarIcon;
+  try {
+    const img = nativeImage.createFromPath(iconPath);
+    if (!img.isEmpty()) {
+      const size = img.getSize();
+      const minDim = Math.min(size.width, size.height);
+      const x = Math.floor((size.width - minDim) / 2);
+      const y = Math.floor((size.height - minDim) / 2);
+      const cropped = img.crop({ x, y, width: minDim, height: minDim });
+      taskbarIcon = cropped.resize({ width: 84, height: 84 });
+    }
+  } catch {}
+
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
@@ -19,6 +33,7 @@ function createWindow() {
     minHeight: 600,
     frame: false,
     titleBarStyle: 'hidden',
+    icon: taskbarIcon || iconPath,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
@@ -26,6 +41,7 @@ function createWindow() {
       sandbox: false,
     },
     backgroundColor: '#0f0f0f',
+    title: 'Asterid Launcher',
     show: false,
   });
 
