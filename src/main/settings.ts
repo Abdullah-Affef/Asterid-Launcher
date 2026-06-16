@@ -13,6 +13,7 @@ export interface LauncherSettings {
   loader: 'vanilla' | 'fabric';
   autoLogin: boolean;
   elyClientId: string;
+  _baseDir?: string;
 }
 
 const defaultSettings: LauncherSettings = {

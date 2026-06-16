@@ -1,13 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 let logCallback: ((msg: string) => void) | null = null;
+let progressCallback: ((data: { phase: string; current: number; total: number }) => void) | null = null;
 
 ipcRenderer.on('main:log', (_e, msg: string) => {
   logCallback?.(msg);
 });
 
+ipcRenderer.on('main:progress', (_e, data: { phase: string; current: number; total: number }) => {
+  progressCallback?.(data);
+});
+
 contextBridge.exposeInMainWorld('electronAPI', {
   onMainLog: (cb: (msg: string) => void) => { logCallback = cb; },
+  onMainProgress: (cb: (data: { phase: string; current: number; total: number }) => void) => { progressCallback = cb; },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
@@ -31,11 +37,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minecraft: {
     versions: () => ipcRenderer.invoke('minecraft:versions'),
     launch: (settings: any, account: any) => ipcRenderer.invoke('minecraft:launch', settings, account),
+    launchInstance: (instance: any, account: any) => ipcRenderer.invoke('minecraft:launchInstance', instance, account),
     kill: () => ipcRenderer.invoke('minecraft:kill'),
     isRunning: () => ipcRenderer.invoke('minecraft:isRunning'),
   },
   modrinth: {
     download: (projectId: string, mcVersion: string, loader: string, projectType: string) =>
       ipcRenderer.invoke('modrinth:download', projectId, mcVersion, loader, projectType),
+    downloadToInstance: (projectId: string, mcVersion: string, loader: string, projectType: string, instanceId: string) =>
+      ipcRenderer.invoke('modrinth:downloadToInstance', projectId, mcVersion, loader, projectType, instanceId),
+  },
+  instances: {
+    list: () => ipcRenderer.invoke('instances:list'),
+    get: (id: string) => ipcRenderer.invoke('instances:get', id),
+    create: (data: any) => ipcRenderer.invoke('instances:create', data),
+    update: (id: string, data: any) => ipcRenderer.invoke('instances:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('instances:delete', id),
+    getDir: (id: string) => ipcRenderer.invoke('instances:getDir', id),
   },
 });

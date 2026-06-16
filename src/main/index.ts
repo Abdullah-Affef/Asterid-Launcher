@@ -7,6 +7,7 @@ import {
 } from './auth';
 import { loadSettings, saveSettings, getSettings, LauncherSettings } from './settings';
 import { fetchVersionManifest, launchMinecraft, killMinecraft, isMinecraftRunning } from './minecraft';
+import { getInstances, getInstance, createInstance, updateInstance, deleteInstance, getInstanceDir, Instance } from './instances';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -78,12 +79,40 @@ function setupIPC() {
   const sendLog = (msg: string) => {
     mainWindow?.webContents.send('main:log', msg);
   };
+  const sendProgress = (phase: string, current: number, total: number) => {
+    mainWindow?.webContents.send('main:progress', { phase, current, total });
+  };
+
+  ipcMain.handle('minecraft:launchInstance', async (_e, instance: Instance, account: Account) => {
+    try {
+      const globSettings = getSettings();
+      const instDir = getInstanceDir(instance.id);
+      const mergedSettings: LauncherSettings = {
+        ...globSettings,
+        selectedVersion: instance.version,
+        loader: instance.loader,
+        minRam: instance.minRam,
+        maxRam: instance.maxRam,
+        javaPath: instance.javaPath || globSettings.javaPath,
+        gameDirectory: instDir,
+      };
+      sendLog('Preparing to launch instance...');
+      await launchMinecraft(mergedSettings, account, sendLog, sendProgress);
+      sendLog('Instance launched');
+      sendProgress('done', 1, 1);
+      return { success: true };
+    } catch (err: any) {
+      sendLog(`Launch error: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  });
 
   ipcMain.handle('minecraft:launch', async (_e, settings: LauncherSettings, account: Account) => {
     try {
       sendLog('Preparing to launch Minecraft...');
-      await launchMinecraft(settings, account, sendLog);
+      await launchMinecraft(settings, account, sendLog, sendProgress);
       sendLog('Minecraft launch command issued');
+      sendProgress('done', 1, 1);
       return { success: true };
     } catch (err: any) {
       sendLog(`Launch error: ${err.message}`);
@@ -92,6 +121,13 @@ function setupIPC() {
   });
   ipcMain.handle('minecraft:kill', () => killMinecraft());
   ipcMain.handle('minecraft:isRunning', () => isMinecraftRunning());
+
+  ipcMain.handle('instances:list', () => getInstances());
+  ipcMain.handle('instances:get', (_e, id: string) => getInstance(id));
+  ipcMain.handle('instances:create', (_e, data: { name: string; version: string; loader: 'vanilla' | 'fabric' }) => createInstance(data));
+  ipcMain.handle('instances:update', (_e, id: string, data: any) => updateInstance(id, data));
+  ipcMain.handle('instances:delete', (_e, id: string) => deleteInstance(id));
+  ipcMain.handle('instances:getDir', (_e, id: string) => getInstanceDir(id));
 
   ipcMain.handle('window:reload', () => {
     if (!mainWindow) return;
@@ -102,70 +138,84 @@ function setupIPC() {
     }
   });
 
+  async function downloadModrinthProject(projectId: string, mcVersion: string, loader: string, projectType: string, targetDir: string) {
+    const subDir = projectType === 'mod' ? 'mods' : projectType === 'resourcepack' ? 'resourcepacks' : projectType === 'shader' ? 'shaderpacks' : 'modpacks';
+    const fullDir = path.join(targetDir, subDir);
+    if (!fs.existsSync(fullDir)) fs.mkdirSync(fullDir, { recursive: true });
+
+    sendLog(`Fetching version info for project...`);
+    const versionsRes = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`);
+    if (!versionsRes.ok) throw new Error('Failed to fetch versions');
+    const versions: any[] = await versionsRes.json() as any[];
+
+    const compatible = versions.find(v => {
+      const hasMc = v.game_versions?.includes(mcVersion);
+      const hasLoader = !loader || loader === 'vanilla' || v.loaders?.includes(loader);
+      return hasMc && hasLoader;
+    }) || versions[0];
+
+    if (!compatible) throw new Error('No compatible version found');
+    const file = compatible.files?.[0];
+    if (!file) throw new Error('No files in version');
+
+    const versionName = compatible.version_number || 'unknown';
+    const fileName = file.filename || 'unknown';
+    sendLog(`Downloading ${fileName} (${versionName})...`);
+
+    const fileRes = await fetch(file.url);
+    if (!fileRes.ok) throw new Error('Failed to download file');
+
+    const contentLength = fileRes.headers.get('content-length');
+    const total = contentLength ? parseInt(contentLength) : 0;
+
+    if (total > 0 && fileRes.body) {
+      const reader = fileRes.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      let lastPct = -1;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        const pct = Math.floor((received / total) * 100);
+        if (pct >= lastPct + 10) {
+          lastPct = pct;
+          sendLog(`Downloading ${fileName}... ${pct}% (${(received / 1024 / 1024).toFixed(1)}MB)`);
+        }
+        sendProgress('modrinth', received, total);
+      }
+      const combined = new Uint8Array(received);
+      let pos = 0;
+      for (const chunk of chunks) { combined.set(chunk, pos); pos += chunk.length; }
+      const buffer = Buffer.from(combined.buffer);
+      const filePath = path.join(fullDir, file.filename);
+      fs.writeFileSync(filePath, buffer);
+    } else {
+      const buffer = Buffer.from(await fileRes.arrayBuffer());
+      const filePath = path.join(fullDir, file.filename);
+      fs.writeFileSync(filePath, buffer);
+    }
+
+    const size = file.size ? ` (${(file.size / 1024 / 1024).toFixed(1)}MB)` : '';
+    sendLog(`Installed ${fileName} to ${subDir}/${size}`);
+    return { success: true, path: path.join(fullDir, file.filename), filename: file.filename };
+  }
+
   ipcMain.handle('modrinth:download', async (_e, projectId: string, mcVersion: string, loader: string, projectType: string) => {
     try {
       const settings = getSettings();
-      const gameDir = settings.gameDirectory;
-      const subDir = projectType === 'mod' ? 'mods' : projectType === 'resourcepack' ? 'resourcepacks' : projectType === 'shader' ? 'shaderpacks' : 'modpacks';
-      const targetDir = path.join(gameDir, subDir);
-      if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+      return await downloadModrinthProject(projectId, mcVersion, loader, projectType, settings.gameDirectory);
+    } catch (err: any) {
+      sendLog(`Download error: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  });
 
-      sendLog(`Fetching version info for project...`);
-      const versionsRes = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`);
-      if (!versionsRes.ok) throw new Error('Failed to fetch versions');
-      const versions: any[] = await versionsRes.json() as any[];
-
-      const compatible = versions.find(v => {
-        const hasMc = v.game_versions?.includes(mcVersion);
-        const hasLoader = !loader || loader === 'vanilla' || v.loaders?.includes(loader);
-        return hasMc && hasLoader;
-      }) || versions[0];
-
-      if (!compatible) throw new Error('No compatible version found');
-      const file = compatible.files?.[0];
-      if (!file) throw new Error('No files in version');
-
-      const versionName = compatible.version_number || 'unknown';
-      const fileName = file.filename || 'unknown';
-      sendLog(`Downloading ${fileName} (${versionName})...`);
-
-      const fileRes = await fetch(file.url);
-      if (!fileRes.ok) throw new Error('Failed to download file');
-
-      const contentLength = fileRes.headers.get('content-length');
-      const total = contentLength ? parseInt(contentLength) : 0;
-
-      if (total > 0 && fileRes.body) {
-        const reader = fileRes.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let received = 0;
-        let lastPct = -1;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-          received += value.length;
-          const pct = Math.floor((received / total) * 100);
-          if (pct >= lastPct + 10) {
-            lastPct = pct;
-            sendLog(`Downloading ${fileName}... ${pct}% (${(received / 1024 / 1024).toFixed(1)}MB)`);
-          }
-        }
-        const combined = new Uint8Array(received);
-        let pos = 0;
-        for (const chunk of chunks) { combined.set(chunk, pos); pos += chunk.length; }
-        const buffer = Buffer.from(combined.buffer);
-        const filePath = path.join(targetDir, file.filename);
-        fs.writeFileSync(filePath, buffer);
-      } else {
-        const buffer = Buffer.from(await fileRes.arrayBuffer());
-        const filePath = path.join(targetDir, file.filename);
-        fs.writeFileSync(filePath, buffer);
-      }
-
-      const size = file.size ? ` (${(file.size / 1024 / 1024).toFixed(1)}MB)` : '';
-      sendLog(`Installed ${fileName} to ${subDir}/${size}`);
-      return { success: true, path: path.join(targetDir, file.filename), filename: file.filename };
+  ipcMain.handle('modrinth:downloadToInstance', async (_e, projectId: string, mcVersion: string, loader: string, projectType: string, instanceId: string) => {
+    try {
+      const instDir = getInstanceDir(instanceId);
+      return await downloadModrinthProject(projectId, mcVersion, loader, projectType, instDir);
     } catch (err: any) {
       sendLog(`Download error: ${err.message}`);
       return { success: false, error: err.message };

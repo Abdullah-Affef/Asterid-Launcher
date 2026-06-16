@@ -145,12 +145,15 @@ async function downloadFile(url: string, dest: string): Promise<void> {
 }
 
 export type LogCallback = (msg: string) => void;
+export type ProgressCallback = (phase: string, current: number, total: number) => void;
 
-export async function downloadLibraries(gameDir: string, libraries: Library[], onLog?: LogCallback): Promise<string[]> {
+export async function downloadLibraries(gameDir: string, libraries: Library[], onLog?: LogCallback, onProgress?: ProgressCallback): Promise<string[]> {
   const librariesDir = path.join(gameDir, 'libraries');
   const classpath: string[] = [];
+  const total = libraries.length;
 
-  for (const lib of libraries) {
+  for (let i = 0; i < libraries.length; i++) {
+    const lib = libraries[i];
     const libPath = getLibraryPath(lib, librariesDir);
     if (!libPath) continue;
     classpath.push(libPath);
@@ -177,12 +180,14 @@ export async function downloadLibraries(gameDir: string, libraries: Library[], o
         }
       }
     }
+
+    onProgress?.('libraries', i + 1, total);
   }
 
   return classpath;
 }
 
-export async function downloadAssets(gameDir: string, assetIndex: { id: string; url: string }, onLog?: LogCallback): Promise<string> {
+export async function downloadAssets(gameDir: string, assetIndex: { id: string; url: string }, onLog?: LogCallback, onProgress?: ProgressCallback): Promise<string> {
   const assetsDir = path.join(gameDir, 'assets');
   const indexPath = path.join(assetsDir, 'indexes', `${assetIndex.id}.json`);
 
@@ -215,6 +220,7 @@ export async function downloadAssets(gameDir: string, assetIndex: { id: string; 
           loggedPct = pct;
           onLog?.(`Downloading assets... ${pct}% (${count}/${total})`);
         }
+        onProgress?.('assets', count, total);
       } catch (e) {
         console.warn(`Failed to download asset: ${key}`, e);
       }
@@ -225,7 +231,7 @@ export async function downloadAssets(gameDir: string, assetIndex: { id: string; 
   return assetIndex.id;
 }
 
-export async function downloadClient(gameDir: string, id: string): Promise<string> {
+export async function downloadClient(gameDir: string, id: string, onLog?: LogCallback, onProgress?: ProgressCallback): Promise<string> {
   const versionsDir = path.join(gameDir, 'versions');
   const versionDir = path.join(versionsDir, id);
   const jarPath = path.join(versionDir, `${id}.jar`);
@@ -238,6 +244,7 @@ export async function downloadClient(gameDir: string, id: string): Promise<strin
 
   ensureDir(versionDir);
 
+  onLog?.('Fetching version manifest...');
   const manifest = await fetchVersionManifest();
   const version = manifest.versions.find(v => v.id === id);
   if (!version) throw new Error(`Version ${id} not found`);
@@ -245,7 +252,10 @@ export async function downloadClient(gameDir: string, id: string): Promise<strin
   const versionInfo = await fetchVersionInfo(version.url);
   fs.writeFileSync(jsonPath, JSON.stringify(versionInfo));
 
+  onLog?.('Downloading client jar...');
+  onProgress?.('client', 0, 1);
   await downloadFile(versionInfo.downloads.client.url, jarPath);
+  onProgress?.('client', 1, 1);
 
   return jarPath;
 }
@@ -313,7 +323,8 @@ async function getFabricProfile(mcVersion: string): Promise<FabricProfile | null
 export async function launchMinecraft(
   settings: LauncherSettings,
   account: Account,
-  onLog?: LogCallback
+  onLog?: LogCallback,
+  onProgress?: ProgressCallback
 ): Promise<ChildProcess | null> {
   if (currentProcess) {
     currentProcess.kill();
@@ -325,15 +336,19 @@ export async function launchMinecraft(
 
   const versionId = settings.selectedVersion;
   const resolvedVersionId = await resolveVersionId(versionId);
+
   const gameDir = settings.gameDirectory;
   ensureDir(gameDir);
 
-  const jarPath = await downloadClient(gameDir, resolvedVersionId);
+  onLog?.('Downloading client...');
+  onProgress?.('client', 0, 1);
+  const jarPath = await downloadClient(gameDir, resolvedVersionId, onLog, onProgress);
   const versionInfo = getVersionJson(gameDir, resolvedVersionId);
   if (!versionInfo) throw new Error(`Version info not found for ${resolvedVersionId}`);
 
   const librariesDir = path.join(gameDir, 'libraries');
-  const classpath = await downloadLibraries(gameDir, versionInfo.libraries, onLog);
+  onLog?.('Downloading libraries...');
+  const classpath = await downloadLibraries(gameDir, versionInfo.libraries, onLog, onProgress);
 
   let fabricProfile: FabricProfile | null = null;
   if (settings.loader === 'fabric') {
@@ -341,7 +356,9 @@ export async function launchMinecraft(
     fabricProfile = await getFabricProfile(resolvedVersionId);
     if (fabricProfile) {
       onLog?.('Downloading Fabric libraries...');
-      for (const lib of fabricProfile.libraries) {
+      const fabricLibs = fabricProfile.libraries;
+      for (let i = 0; i < fabricLibs.length; i++) {
+        const lib = fabricLibs[i];
         const libRelPath = mavenToRelativePath(lib.name);
         const libPath = path.join(librariesDir, libRelPath);
         if (!fs.existsSync(libPath)) {
@@ -353,6 +370,7 @@ export async function launchMinecraft(
           }
         }
         classpath.push(libPath);
+        onProgress?.('fabric', i + 1, fabricLibs.length);
       }
     } else {
       onLog?.('Warning: Could not fetch Fabric profile, launching as vanilla');
@@ -364,7 +382,8 @@ export async function launchMinecraft(
   const nativesDir = path.join(app.getPath('userData'), 'natives', versionId);
   ensureDir(nativesDir);
 
-  const assetIndex = await downloadAssets(gameDir, versionInfo.assetIndex, onLog);
+  onLog?.('Downloading assets...');
+  const assetIndex = await downloadAssets(gameDir, versionInfo.assetIndex, onLog, onProgress);
 
   const javaPath = settings.javaPath || findJava();
 

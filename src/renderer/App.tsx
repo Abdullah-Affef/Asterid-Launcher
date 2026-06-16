@@ -2,23 +2,23 @@ import { useState, useEffect, useCallback } from 'react';
 import './App.css';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
-import { ModsView } from './components/ModsView';
-import { ResourcePacksView } from './components/ResourcePacksView';
-import { ShadersView } from './components/ShadersView';
-import { ModpacksView } from './components/ModpacksView';
+import { InstancesView } from './components/InstancesView';
+import { ModrinthBrowser } from './components/ModrinthBrowser';
 import { SettingsView } from './components/SettingsView';
 import { AccountView } from './components/AccountView';
-import type { Account, LauncherSettings, VersionManifest } from './types';
+import type { Account, Instance, LauncherSettings, VersionManifest, ProgressData } from './types';
 
-export type Tab = 'dashboard' | 'mods' | 'resourcepacks' | 'shaders' | 'modpacks' | 'settings' | 'accounts';
+export type Tab = 'instances' | 'dashboard' | 'mods' | 'resourcepacks' | 'shaders' | 'modpacks' | 'settings' | 'accounts';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const [activeTab, setActiveTab] = useState<Tab>('instances');
+  const [selectedInstance, setSelectedInstance] = useState<{ id: string; version: string; loader: string } | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [settings, setSettings] = useState<LauncherSettings | null>(null);
   const [versions, setVersions] = useState<VersionManifest | null>(null);
   const [maximized, setMaximized] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
+  const [progress, setProgress] = useState<ProgressData | null>(null);
 
   useEffect(() => {
     window.electronAPI.settings.get().then(s => setSettings(s));
@@ -34,6 +34,9 @@ export default function App() {
     window.electronAPI.onMainLog((msg: string) => {
       const time = new Date().toLocaleTimeString();
       setLogs(prev => [...prev, `[${time}] ${msg}`]);
+    });
+    window.electronAPI.onMainProgress?.((data) => {
+      setProgress(data);
     });
   }, []);
 
@@ -66,16 +69,46 @@ export default function App() {
 
   const renderView = () => {
     switch (activeTab) {
+      case 'instances':
+        return <InstancesView account={account} versions={versions} logs={logs} onClearLogs={clearLogs} addLog={addLog} onSelectInstance={(inst) => setSelectedInstance(inst ? { id: inst.id, version: inst.version, loader: inst.loader } : null)} />;
       case 'dashboard':
         return <DashboardView account={account} settings={settings} versions={versions} onRefreshVersions={refreshVersions} onRefreshAccount={refreshAccount} onSettingsChange={handleSettingsChange} logs={logs} onClearLogs={clearLogs} addLog={addLog} />;
       case 'mods':
-        return <ModsView settings={settings} addLog={addLog} />;
       case 'resourcepacks':
-        return <ResourcePacksView settings={settings} addLog={addLog} />;
       case 'shaders':
-        return <ShadersView settings={settings} addLog={addLog} />;
-      case 'modpacks':
-        return <ModpacksView settings={settings} addLog={addLog} />;
+      case 'modpacks': {
+        if (!selectedInstance) {
+          return (
+            <div className="empty-state" style={{ padding: '48px 24px' }}>
+              <span style={{ fontSize: 48, marginBottom: 12, opacity: 0.4 }}>📁</span>
+              <h3>Select an instance first</h3>
+              <p>Open an instance detail page to browse and install {activeTab}</p>
+              <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setActiveTab('instances')}>Go to Instances</button>
+            </div>
+          );
+        }
+        const projectTypeMap: Record<string, string> = { mods: 'mod', resourcepacks: 'resourcepack', shaders: 'shader', modpacks: 'modpack' };
+        const titleMap: Record<string, string> = { mods: 'Mods', resourcepacks: 'Resource Packs', shaders: 'Shaders', modpacks: 'Modpacks' };
+        const descMap: Record<string, string> = {
+          mods: 'Browse and install mods from Modrinth to the selected instance',
+          resourcepacks: 'Browse and install resource packs from Modrinth to the selected instance',
+          shaders: 'Browse and install shaders from Modrinth to the selected instance',
+          modpacks: 'Browse and install modpacks from Modrinth to the selected instance',
+        };
+        const iconMap: Record<string, string> = { mods: '⚡', resourcepacks: '🎨', shaders: '✨', modpacks: '📦' };
+        return (
+          <ModrinthBrowser
+            projectType={projectTypeMap[activeTab]}
+            title={titleMap[activeTab]}
+            description={descMap[activeTab]}
+            emptyIcon={iconMap[activeTab]}
+            settings={{ selectedVersion: selectedInstance.version, loader: selectedInstance.loader } as any}
+            addLog={addLog}
+            instanceId={selectedInstance.id}
+            key={selectedInstance.id + activeTab}
+          />
+        );
+      }
       case 'settings':
         return <SettingsView settings={settings} onSave={refreshSettings} />;
       case 'accounts':
@@ -99,9 +132,32 @@ export default function App() {
         </div>
       </div>
       <div className="layout">
-        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} account={account} />
-        <main className="main-content">
-          {renderView()}
+        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} account={account} selectedInstanceId={selectedInstance?.id ?? null} />
+        <main className="main-content" style={{ display: 'flex', flexDirection: 'column' }}>
+          {progress && progress.phase !== 'done' && (
+            <div className="download-bar">
+              <div className="download-bar-label">
+                {progress.phase === 'client' && 'Downloading client...'}
+                {progress.phase === 'libraries' && `Downloading libraries... (${progress.current}/${progress.total})`}
+                {progress.phase === 'fabric' && `Downloading Fabric libraries... (${progress.current}/${progress.total})`}
+                {progress.phase === 'assets' && `Downloading assets... (${progress.current}/${progress.total})`}
+                {progress.phase === 'modrinth' && `Downloading... (${(progress.current / 1024 / 1024).toFixed(1)}MB)`}
+              </div>
+              <div className="download-bar-track">
+                <div
+                  className="download-bar-fill"
+                  style={{
+                    width: progress.total > 0
+                      ? `${Math.min(100, Math.round((progress.current / progress.total) * 100))}%`
+                      : '0%',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            {renderView()}
+          </div>
         </main>
       </div>
     </div>

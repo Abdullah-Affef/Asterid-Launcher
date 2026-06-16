@@ -9,23 +9,26 @@ interface Props {
   emptyIcon: string;
   settings: LauncherSettings | null;
   addLog: (msg: string) => void;
+  instanceId?: string;
 }
 
 function SkeletonGrid() {
   return (
     <div className="recommendations-grid">
-      {Array.from({ length: 10 }).map((_, i) => (
-        <div key={i} className="skeleton">
-          <div className="skeleton-icon" />
-          <div className="skeleton-line mid" />
-          <div className="skeleton-line short" />
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div key={i} className="skeleton-horizontal" style={{ display: 'flex', gap: 14, padding: 12, alignItems: 'center' }}>
+          <div className="skeleton-icon-horizontal" />
+          <div style={{ flex: 1 }}>
+            <div className="skeleton-line mid" />
+            <div className="skeleton-line short" />
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
-function ProjectCard({ project, mcVersion, loader, projectType, addLog }: { project: ModrinthProject; mcVersion: string; loader: string; projectType: string; addLog: (msg: string) => void }) {
+function ProjectCard({ project, mcVersion, loader, projectType, addLog, instanceId }: { project: ModrinthProject; mcVersion: string; loader: string; projectType: string; addLog: (msg: string) => void; instanceId?: string }) {
   const [state, setState] = useState<'idle' | 'fetching' | 'downloading' | 'done' | 'error'>('idle');
   const [err, setErr] = useState('');
 
@@ -34,7 +37,9 @@ function ProjectCard({ project, mcVersion, loader, projectType, addLog }: { proj
     setState('fetching');
     setErr('');
     addLog(`[${project.title}] Looking up version info...`);
-    const res = await window.electronAPI.modrinth.download(project.project_id, mcVersion, loader, projectType);
+    const res = instanceId
+      ? await window.electronAPI.modrinth.downloadToInstance(project.project_id, mcVersion, loader, projectType, instanceId)
+      : await window.electronAPI.modrinth.download(project.project_id, mcVersion, loader, projectType);
     if (res.success) {
       setState('done');
       addLog(`[${project.title}] Installed ${res.filename}`);
@@ -53,17 +58,18 @@ function ProjectCard({ project, mcVersion, loader, projectType, addLog }: { proj
     state === 'error' ? { background: 'var(--danger)', color: '#fff' } : {};
 
   return (
-    <div className="modrinth-card" onClick={() => window.open(`https://modrinth.com/${project.project_type}/${project.slug}`, '_blank')}>
+    <div className="modrinth-card modrinth-card-horizontal" onClick={() => window.open(`https://modrinth.com/${project.project_type}/${project.slug}`, '_blank')}>
       <div className="modrinth-card-icon">
         {project.icon_url ? (
           <img src={project.icon_url} alt={project.title} loading="lazy" />
         ) : (
-          '📦'
+          <span style={{ fontSize: 24 }}>📦</span>
         )}
       </div>
       <div className="modrinth-card-body">
         <div className="modrinth-card-title">{project.title}</div>
         <div className="modrinth-card-author">{project.author}</div>
+        <div className="modrinth-card-desc">{project.description?.slice(0, 120)}{project.description?.length > 120 ? '...' : ''}</div>
         {err && <div style={{ fontSize: 10, color: 'var(--danger)', marginBottom: 4 }}>{err}</div>}
         <div className="modrinth-card-footer">
           <span className="modrinth-card-downloads">
@@ -85,7 +91,7 @@ function ProjectCard({ project, mcVersion, loader, projectType, addLog }: { proj
   );
 }
 
-export function ModrinthBrowser({ projectType, title, description, emptyIcon, settings, addLog }: Props) {
+export function ModrinthBrowser({ projectType, title, description, emptyIcon, settings, addLog, instanceId }: Props) {
   const mcVersion = settings?.selectedVersion || '';
   const loader = settings?.loader || 'vanilla';
   const { projects, loading, initialLoading, hasMore, error, doSearch, loadMore } = useModrinthSearch(projectType, mcVersion, loader);
@@ -149,7 +155,7 @@ export function ModrinthBrowser({ projectType, title, description, emptyIcon, se
         <>
           <div className="recommendations-grid">
             {projects.map(p => (
-              <ProjectCard key={p.project_id} project={p} mcVersion={mcVersion} loader={loader} projectType={projectType} addLog={addLog} />
+              <ProjectCard key={p.project_id} project={p} mcVersion={mcVersion} loader={loader} projectType={projectType} addLog={addLog} instanceId={instanceId} />
             ))}
             {loading && Array.from({ length: 4 }).map((_, i) => (
               <div key={`skel-${i}`} className="skeleton">
