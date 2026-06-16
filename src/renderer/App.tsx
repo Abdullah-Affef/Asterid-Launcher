@@ -6,11 +6,13 @@ import { InstancesView } from './components/InstancesView';
 import { ModrinthBrowser } from './components/ModrinthBrowser';
 import { SettingsView } from './components/SettingsView';
 import { AccountView } from './components/AccountView';
-import type { Account, Instance, LauncherSettings, VersionManifest, ProgressData } from './types';
+import { SetupWizard } from './components/SetupWizard';
+import type { Account, Instance, LauncherSettings, VersionManifest, ProgressData, UpdateStatus } from './types';
 
 export type Tab = 'instances' | 'dashboard' | 'mods' | 'resourcepacks' | 'shaders' | 'modpacks' | 'settings' | 'accounts';
 
 export default function App() {
+  const [setupNeeded, setSetupNeeded] = useState<boolean | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('instances');
   const [selectedInstance, setSelectedInstance] = useState<{ id: string; version: string; loader: string } | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
@@ -19,12 +21,36 @@ export default function App() {
   const [maximized, setMaximized] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [progress, setProgress] = useState<ProgressData | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+
+  const loadData = useCallback(async () => {
+    const [s, a, v] = await Promise.all([
+      window.electronAPI.settings.get(),
+      window.electronAPI.accounts.current(),
+      window.electronAPI.minecraft.versions(),
+    ]);
+    setSettings(s);
+    setAccount(a);
+    setVersions(v);
+  }, []);
 
   useEffect(() => {
-    window.electronAPI.settings.get().then(s => setSettings(s));
-    window.electronAPI.accounts.current().then(a => setAccount(a));
-    window.electronAPI.minecraft.versions().then(v => setVersions(v));
-  }, []);
+    window.electronAPI.setup.isNeeded().then(info => {
+      if (info.needed) {
+        setSetupNeeded(true);
+      } else {
+        setSetupNeeded(false);
+        loadData();
+      }
+    });
+  }, [loadData]);
+
+  useEffect(() => {
+    window.electronAPI.onSetupDone(() => {
+      setSetupNeeded(false);
+      loadData();
+    });
+  }, [loadData]);
 
   useEffect(() => {
     window.electronAPI.window.isMaximized().then(m => setMaximized(m));
@@ -37,6 +63,12 @@ export default function App() {
     });
     window.electronAPI.onMainProgress?.((data) => {
       setProgress(data);
+    });
+  }, []);
+
+  useEffect(() => {
+    window.electronAPI.onUpdateStatus((data) => {
+      setUpdateStatus(data);
     });
   }, []);
 
@@ -65,6 +97,46 @@ export default function App() {
   const handleSettingsChange = async (updated: LauncherSettings) => {
     setSettings(updated);
     await window.electronAPI.settings.save(updated);
+  };
+
+  // Show loading while determining setup status
+  if (setupNeeded === null) {
+    return (
+      <div className="app">
+        <div className="setup-wizard-overlay">
+          <div className="loading">Loading...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show setup wizard on first launch
+  if (setupNeeded) {
+    return (
+      <div className="app">
+        <SetupWizard onComplete={() => {}} />
+      </div>
+    );
+  }
+
+  const renderUpdateBanner = () => {
+    if (!updateStatus) return null;
+    if (updateStatus.status === 'downloaded') {
+      return (
+        <div className="update-banner update-banner-ready">
+          <span>Update downloaded — restart the launcher to install</span>
+        </div>
+      );
+    }
+    if (updateStatus.status === 'downloading' && updateStatus.progress) {
+      const pct = Math.round(updateStatus.progress.percent || 0);
+      return (
+        <div className="update-banner">
+          <span>Downloading update... {pct}%</span>
+        </div>
+      );
+    }
+    return null;
   };
 
   const renderView = () => {
@@ -134,6 +206,7 @@ export default function App() {
       <div className="layout">
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} account={account} selectedInstanceId={selectedInstance?.id ?? null} />
         <main className="main-content" style={{ display: 'flex', flexDirection: 'column' }}>
+          {renderUpdateBanner()}
           {progress && progress.phase !== 'done' && (
             <div className="download-bar">
               <div className="download-bar-label">
